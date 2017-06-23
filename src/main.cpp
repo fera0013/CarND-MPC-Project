@@ -67,12 +67,11 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 
 int main() {
   uWS::Hub h;
-
+  
+  
   // MPC is initialized here!
   MPC mpc;
-
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
-                     uWS::OpCode opCode) {
+  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -91,39 +90,69 @@ int main() {
           double py = j[1]["y"];
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
+          v *= 0.44704; // from MPH to m/sec
+          
+          double steer_value_input = j[1]["steering_angle"];
+          double throttle_value_input = j[1]["throttle"];
+          steer_value_input *= deg2rad(25); // deg to rnd
+      
+          // Convert from world to car space
+          Eigen::VectorXd ptsx_car(ptsx.size());      
+          Eigen::VectorXd ptsy_car(ptsy.size());  
+          double cos_psi = cos(psi);
+          double sin_psi = sin(psi);
+          double dx, dy;
+          for (int i=0; i<ptsx.size(); i++){
+            dx = (ptsx[i]-px);
+            dy = (ptsy[i]-py);
+            ptsx_car(i) = dx*cos_psi + dy*sin_psi;
+            ptsy_car(i) = -dx*sin_psi + dy*cos_psi;
+          }
+      
+          // Calculate the 3rd order polynomial connecting all waypoints
+          Eigen::VectorXd coeffs = polyfit(ptsx_car, ptsy_car, 3);
+      
+          // Calculate the error of the current state
+          double cte = polyeval(coeffs, 0); 
+          double epsi = -atan(coeffs[1]);
 
-          /*
-          * TODO: Calculate steeering angle and throttle using MPC.
-          *
-          * Both are in between [-1, 1].
-          *
-          */
-          double steer_value;
-          double throttle_value;
+          // Use MPC optimizer to get the steering angle an throttle
+          // which minimizes the cost
+
+          //Predict state in 100 ms (latency)
+          Eigen::VectorXd state(6);
+          double latency = 0.1;
+          double Lf = 2.67;
+          double x_dly = (0.0 + v * latency);
+          double y_dly = 0.0;
+          double psi_dly = 0.0 + v * steer_value_input / Lf * latency;
+          double v_dly = 0.0 + v + throttle_value_input * latency;
+          double cte_dly = cte + (v * sin(epsi) * latency);
+          double epsi_dly = epsi + v * steer_value_input / Lf * latency;
+          state << x_dly, y_dly, psi_dly, v_dly, cte_dly, epsi_dly;
+      
+    
+          vector<double> next_state = mpc.Solve(state, coeffs);
+          double steer_value = (-next_state[6])/deg2rad(25);
+          double throttle_value = next_state[7];
 
           json msgJson;
-          // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
-          // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Green line
-
+          // Draw the predicted trajectory (green line) 
+          vector<double> mpc_x_vals = mpc.solution_x_;
+          vector<double> mpc_y_vals = mpc.solution_y_;
           msgJson["mpc_x"] = mpc_x_vals;
           msgJson["mpc_y"] = mpc_y_vals;
 
-          //Display the waypoints/reference line
+          // Draw the reference trajectory (yellow line) 
           vector<double> next_x_vals;
           vector<double> next_y_vals;
-
-          //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
-          // the points in the simulator are connected by a Yellow line
-
+          for (int i=0; i<ptsx_car.size(); i++){
+            next_x_vals.push_back(ptsx_car(i));
+            next_y_vals.push_back(ptsy_car(i));
+          }
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
 
@@ -155,7 +184,7 @@ int main() {
   // doesn't compile :-(
   h.onHttpRequest([](uWS::HttpResponse *res, uWS::HttpRequest req, char *data,
                      size_t, size_t) {
-    const std::string s = "<h1>Hello world!</h1>";
+  const std::string s = "<h1>Hello world!</h1>";
     if (req.getUrl().valueLength == 1) {
       res->end(s.data(), s.length());
     } else {
