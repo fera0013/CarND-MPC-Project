@@ -125,10 +125,10 @@ int main() {
           double Lf = 2.67;
           double x_dly = (0.0 + v * latency);
           double y_dly = 0.0;
-          double psi_dly = 0.0 + v * steer_value_input / Lf * latency;
+          double psi_dly = 0.0 - v * steer_value_input / Lf * latency;
           double v_dly = 0.0 + v + throttle_value_input * latency;
           double cte_dly = cte + (v * sin(epsi) * latency);
-          double epsi_dly = epsi + v * steer_value_input / Lf * latency;
+          double epsi_dly = epsi + psi_dly;
           state << x_dly, y_dly, psi_dly, v_dly, cte_dly, epsi_dly;
       
     
