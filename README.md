@@ -107,3 +107,114 @@ that's just a guess.
 
 One last note here: regardless of the IDE used, every submitted project must
 still be compilable with cmake and make./
+
+## Implementation
+
+### The Model
+
+The state consists of the car's x and y positions, the speed (v), the orientation (psi) and the cross track and orientation error:
+
+```c++
+double x = state[0];
+double y = state[1];
+double psi = state[2];
+double v = state[3];
+double cte = state[4];
+double epsi = state[5];
+```
+
+Actuators are accelaration and throttle, with a value range between -1 and 1:
+
+```c++
+msgJson["steering_angle"] = steer_value;
+msgJson["throttle"] = throttle_value;
+```
+
+The state is updated by the following statements:
+
+```c++
+fg[2 + x_start + i] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+fg[2 + y_start + i] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+fg[2 + psi_start + i] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
+fg[2 + v_start + i] = v1 - (v0 + a0 * dt);
+fg[2 + cte_start + i] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+fg[2 + epsi_start + i] = epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);  
+```
+
+### Timestep Length and Elapsed Duration 
+
+The timestamp length and elapsed duration were found by simply trying different values. The combination
+
+```c++
+size_t N = 10;            
+double dt = 0.2;  
+```
+worked well.  
+
+### Polynomial Fitting and MPC Preprocessing
+
+The reference and MPC tracks are approximated by 3rd order polynomials, using the following algorithm:
+
+```c++
+Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals, int order) 
+{
+  assert(xvals.size() == yvals.size());
+  assert(order >= 1 && order <= xvals.size() - 1);
+  Eigen::MatrixXd A(xvals.size(), order + 1);
+
+  for (int i = 0; i < xvals.size(); i++) {
+    A(i, 0) = 1.0;
+  }
+
+  for (int j = 0; j < xvals.size(); j++) {
+    for (int i = 0; i < order; i++) {
+      A(j, i + 1) = A(j, i) * xvals(j);
+    }
+  }
+
+  auto Q = A.householderQr();
+  auto result = Q.solve(yvals);
+  return result;
+}
+```
+
+In a preprocessing step, the state values received from the environment are transformed into vehicle coordinates:
+
+```c++
+Eigen::VectorXd ptsx_car(ptsx.size());      
+Eigen::VectorXd ptsy_car(ptsy.size());  
+double cos_psi = cos(psi);
+double sin_psi = sin(psi);
+double dx, dy;
+for (int i=0; i<ptsx.size(); i++){
+ dx = (ptsx[i]-px);
+ dy = (ptsy[i]-py);
+ ptsx_car(i) = dx*cos_psi + dy*sin_psi;
+ ptsy_car(i) = -dx*sin_psi + dy*cos_psi;
+}
+```
+
+### Model Predictive Control with Latency
+
+To simulate real conditions, a latency of 100 ms is implemented by the following statements:
+
+```c++
+Eigen::VectorXd state(6);
+double latency = 0.1;
+double Lf = 2.67;
+double x_dly = (0.0 + v * latency);
+double y_dly = 0.0;
+double psi_dly = 0.0 + v * steer_value_input / Lf * latency;
+double v_dly = 0.0 + v + throttle_value_input * latency;
+double cte_dly = cte + (v * sin(epsi) * latency);
+double epsi_dly = epsi + v * steer_value_input / Lf * latency;
+state << x_dly, y_dly, psi_dly, v_dly, cte_dly, epsi_dly;
+```
+
+For the correctness of these calculations, the speed which is given in mph is transformed into m/s:
+
+```c++
+v *= 0.44704;
+```
+
+
