@@ -94,8 +94,7 @@ int main() {
           
           double steer_value_input = j[1]["steering_angle"];
           double throttle_value_input = j[1]["throttle"];
-          steer_value_input *= deg2rad(25); // deg to rnd
-      
+     
           // Convert from world to car space
           Eigen::VectorXd ptsx_car(ptsx.size());      
           Eigen::VectorXd ptsy_car(ptsy.size());  
